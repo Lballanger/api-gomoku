@@ -5,7 +5,9 @@
   "main": "dist/app.js",
   "scripts": {
     "dev": "concurrently -k -n \"Typescript,Node\" -p \"[{name}]\" -c \"blue,green\" \"tsc --watch\" \"nodemon dist/app.js\"",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "nvm use && tsc",
+    "start": "node dist/app.js"
   },
   "keywords": [],
   "author": "",
