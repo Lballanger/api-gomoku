@@ -52,8 +52,23 @@ const players: Record<string, Player[]> = {
 };
 // Stockage des invitations en attente
 const pendingInvitations: {
-  [invitedPlayerId: string]: { gameId: number; invitedBy: string };
+  [invitedPlayerId: string]: {
+    gameId: number;
+    invitedBy: string;
+    room: string;
+  };
 } = {};
+
+interface Game {
+  id: number;
+  players: [string | null, string | null] | null;
+  grid: string[][] | null;
+  winner: string | null;
+}
+
+type Games = Record<string, Game[]>;
+
+let games: Games = {};
 
 // Grille de jeu
 const initializeGrid = (rows: number, cols: number): string[][] => {
@@ -243,51 +258,6 @@ export const initializeSocket = (io: Server) => {
       } else {
         console.log(`La room ${room} n'existe pas`);
       }
-
-      // // Vérifier si la room existe déjà dans la map des rooms
-      // if (!rooms.has(room)) {
-      //   // Créer la room et initialiser le nombre de connexions actives à 0
-      //   rooms.set(room, 0);
-      // }
-
-      // const connectionsCount: number = rooms.get(room) || 0;
-
-      // Vérifier si le nombre de connexions actives a atteint la limite
-      // if (connectionsCount >= maxConnectionsPerRoom) {
-      //   // Envoyer un message d'erreur au client
-      //   socket.emit(
-      //     "roomFull",
-      //     `La room ${room} est pleine. Veuillez réessayer plus tard.`
-      //   );
-
-      //   // Refuser la connexion en fermant le socket
-      //   socket.disconnect(true);
-      //   return;
-      // }
-
-      // console.log(rooms);
-
-      // // Augmenter le nombre de connexions actives pour cette room
-      // rooms.set(room, connectionsCount + 1);
-
-      // // vérifier que le socket n'est pas déjà dans la room
-      // if (socket.rooms.has(room)) {
-      //   return;
-      // }
-
-      // // Joindre la room
-      // socket.join(room);
-
-      // // Ajouter le joueur à la room avec l'ID de la room
-      // players[room].push({ id: socket.id, pseudo: "test", currentRoom: room });
-
-      // console.log(players[room]);
-      // // Émettre un événement à tous les membres de la room pour informer de la nouvelle connexion
-      // io.to(room).emit("userJoined", players[room]);
-
-      // ...
-      // Autres logiques spécifiques à la room
-      // ...
     });
 
     socket.on("leaveRoom", (room) => {
@@ -328,21 +298,6 @@ export const initializeSocket = (io: Server) => {
           console.log(`Client ${socket.id} a quitté la room ${roomPath}`);
           console.log(players[roomPath]);
         }
-        // console.log(`Le joueur ${socket.id} a quitté la room ${room}`);
-
-        // // Supprimer le joueur de la liste des joueurs de cette room
-        // if (!players[room]) {
-        //   return;
-        // }
-
-        // players[room] = players[room].filter((player) => player.id !== socket.id);
-
-        // // Mettre à jour le nombre de connexions actives pour cette room
-        // const connectionsCount: number = rooms.get(room) || 0;
-        // rooms.set(room, connectionsCount - 1);
-
-        // // Émettre un événement à tous les membres de la room pour informer de la déconnexion
-        // io.to(room).emit("userLeft", players[room]);
       }
     });
 
@@ -351,12 +306,26 @@ export const initializeSocket = (io: Server) => {
         `Le joueur ${socket.id} a envoyé une invitation au joueur ${invitedPlayerId}`
       );
 
+      // Recherchez la room à laquelle le client est connecté
+      let roomPath: string | null = null;
+
+      socket.rooms.forEach((r) => {
+        if (r !== socket.id) {
+          roomPath = r;
+        }
+      });
+
       const gameId = generateGameId();
+
+      if (!roomPath) {
+        return;
+      }
 
       // Stocker l'invitation en attente
       pendingInvitations[invitedPlayerId] = {
         gameId,
         invitedBy: socket.id,
+        room: roomPath,
       };
 
       socket.join(gameId.toString());
@@ -375,7 +344,7 @@ export const initializeSocket = (io: Server) => {
       );
 
       // Récupérer l'invitation en attente
-      const { gameId, invitedBy } = pendingInvitations[socket.id];
+      const { gameId, invitedBy, room } = pendingInvitations[socket.id];
 
       // Supprimer l'invitation en attente
       delete pendingInvitations[socket.id];
@@ -401,6 +370,19 @@ export const initializeSocket = (io: Server) => {
         currentPlayerId,
         gameId
       );
+
+      if (!games[room]) {
+        games[room] = [];
+      }
+
+      games[room].push({
+        id: gameId,
+        players: [socket.id, invitedPlayerId],
+        grid,
+        winner: null,
+      });
+
+      io.to(room).emit("gameList", games[room]);
 
       console.log(
         `Joueur 1 : ${joueur1Id} qui a le symbole ${playerSymbols[0]}`
@@ -439,6 +421,20 @@ export const initializeSocket = (io: Server) => {
         joueur1Id = null;
         joueur2Id = null;
         initializeGrid(nbRows, pxCells);
+
+        // Récuperer la room de la partie
+        const room = Object.keys(games).find((key) =>
+          games[key].find((game) => game.players?.includes(socket.id))
+        );
+
+        // Supprimer la partie de la liste des parties
+        if (room) {
+          games[room] = games[room].filter(
+            (game) => !game.players?.includes(socket.id)
+          );
+
+          io.to(room).emit("gameList", games[room]);
+        }
 
         // Émettre l'événement roomInformation au client pour lui envoyer les informations des rooms
         io.emit("roomInformation", rooms);
@@ -486,10 +482,6 @@ export const initializeSocket = (io: Server) => {
         });
         // Émettre l'événement roomInformation au client pour lui envoyer les informations des rooms
         io.emit("roomInformation", rooms);
-
-        // Mettre à jour le nombre de connexions actives pour cette room
-        // const connectionsCount: number = rooms.get(currentRoom) || 0;
-        // rooms.set(currentRoom, connectionsCount - 1);
 
         // Émettre un événement à tous les membres de la room pour informer de la déconnexion
         io.to(currentRoom).emit("updatePlayers", players[currentRoom]);
