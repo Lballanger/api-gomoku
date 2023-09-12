@@ -5,12 +5,27 @@ import cors from "cors";
 import { initializeSocket } from "./server/socket.js";
 
 const app = express();
-app.use(cors());
+
+const whitelist = ["http://127.0.0.1:5173/", "https://gomoku-ands.vercel.app/"];
+
+console.log(process.env.PROD_CLIENT_URL, process.env.LOCAL_CLIENT_URL);
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (whitelist.indexOf(origin as string) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+  })
+);
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: "*",
+    origin: "http://127.0.0.1:5173",
   },
 });
 

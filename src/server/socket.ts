@@ -392,6 +392,17 @@ export const initializeSocket = (io: Server) => {
       );
     });
 
+    socket.on("declineInvite", (invitedPlayerId) => {
+      console.log(
+        `Le joueur ${socket.id} a refusé la partie avec le joueur ${invitedPlayerId}`
+      );
+
+      // Supprimer l'invitation en attente
+      delete pendingInvitations[socket.id];
+
+      io.to(invitedPlayerId).emit("declinedInvite", socket.id);
+    });
+
     // Gestion de l'événement "updateGrid"
     socket.on("setUpdateGrid", (currentPlayer, updatedGrid) => {
       console.log("Mise à jour de la grille");
