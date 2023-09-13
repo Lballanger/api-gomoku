@@ -8,9 +8,9 @@ import { initializeSocket } from "./server/socket.js";
 const app = express();
 
 const whitelist =
-  process.env.NODE_ENV === "production"
-    ? [process.env.PROD_CLIENT_URL]
-    : [process.env.LOCAL_CLIENT_URL];
+  process.env.NODE_ENV === "dev"
+    ? [process.env.LOCAL_CLIENT_URL]
+    : [process.env.PROD_CLIENT_URL];
 
 app.use(
   cors({
@@ -28,9 +28,9 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin:
-      process.env.NODE_ENV === "production"
-        ? process.env.PROD_CLIENT_URL
-        : process.env.LOCAL_CLIENT_URL,
+      process.env.NODE_ENV === "dev"
+        ? process.env.LOCAL_CLIENT_URL
+        : process.env.PROD_CLIENT_URL,
   },
 });
 
