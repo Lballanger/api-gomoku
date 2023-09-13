@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -6,9 +7,10 @@ import { initializeSocket } from "./server/socket.js";
 
 const app = express();
 
-const whitelist = ["http://127.0.0.1:5173/", "https://gomoku-ands.vercel.app/"];
-
-console.log(process.env.PROD_CLIENT_URL, process.env.LOCAL_CLIENT_URL);
+const whitelist =
+  process.env.NODE_ENV === "production"
+    ? [process.env.PROD_CLIENT_URL]
+    : [process.env.LOCAL_CLIENT_URL];
 
 app.use(
   cors({
@@ -25,7 +27,10 @@ app.use(
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: "http://127.0.0.1:5173",
+    origin:
+      process.env.NODE_ENV === "production"
+        ? process.env.PROD_CLIENT_URL
+        : process.env.LOCAL_CLIENT_URL,
   },
 });
 
