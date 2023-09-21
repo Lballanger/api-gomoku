@@ -306,6 +306,16 @@ export const initializeSocket = (io: Server) => {
         `Le joueur ${socket.id} a envoyé une invitation au joueur ${invitedPlayerId}`
       );
 
+      if (socket.id === invitedPlayerId) {
+        console.log("Vous ne pouvez pas envoyer une invitation à vous même");
+        io.to(socket.id).emit("declinedInvite", socket.id);
+        io.to(socket.id).emit(
+          "error",
+          "Vous ne pouvez pas envoyer une invitation à vous-même"
+        );
+        return;
+      }
+
       // Recherchez la room à laquelle le client est connecté
       let roomPath: string | null = null;
 
