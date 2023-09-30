@@ -10,17 +10,6 @@ const maxConnectionsPerRoom: number = 100;
 const playerSymbols: string[] = ["O", "X"];
 
 // =======================================================================================
-// Données du jeu
-// =======================================================================================
-
-let winner: string | null = null;
-let winningCells: [number, number][] = [];
-let currentPlayerId: string | null = null;
-let nextPlayerId: string | null = null;
-let joueur1Id: string | null = null;
-let joueur2Id: string | null = null;
-
-// =======================================================================================
 // Structures de données
 // =======================================================================================
 
@@ -29,13 +18,32 @@ interface Room {
   capacity: number;
   path: string;
   activeConnections: number;
+  messages: string[];
 }
 
 // Stocker les informations sur les rooms et le nombre de connexions actives
 const rooms: Room[] = [
-  { name: "Salle 1", capacity: 100, path: "1", activeConnections: 0 },
-  { name: "Salle 2", capacity: 100, path: "2", activeConnections: 0 },
-  { name: "Salle 3", capacity: 100, path: "3", activeConnections: 0 },
+  {
+    name: "Salle 1",
+    capacity: 100,
+    path: "1",
+    activeConnections: 0,
+    messages: [],
+  },
+  {
+    name: "Salle 2",
+    capacity: 100,
+    path: "2",
+    activeConnections: 0,
+    messages: [],
+  },
+  {
+    name: "Salle 3",
+    capacity: 100,
+    path: "3",
+    activeConnections: 0,
+    messages: [],
+  },
 ];
 
 // Créez un objet pour stocker les joueurs par room
@@ -45,28 +53,39 @@ interface Player {
   currentRoom: string;
 }
 
-const players: Record<string, Player[]> = {
-  "1": [],
-  "2": [],
-  "3": [],
-};
 // Stockage des invitations en attente
 const pendingInvitations: {
   [invitedPlayerId: string]: {
     gameId: number;
     invitedBy: string;
     room: string;
+    joueur1Id: string;
+    joueur2Id: string;
+    currentPlayerId: string;
+    nextPlayerId: string;
   };
 } = {};
 
 interface Game {
   id: number;
-  players: [string | null, string | null] | null;
-  grid: string[][] | null;
+  players: [string, string];
+  grid: string[][];
+  winningCells: number[][];
+  currentPlayerId: string;
+  nextPlayerId: string;
+  joueur1Id: string;
+  joueur2Id: string;
   winner: string | null;
+  messages: string[][];
 }
 
 type Games = Record<string, Game[]>;
+
+const players: Record<string, Player[]> = {
+  "1": [],
+  "2": [],
+  "3": [],
+};
 
 let games: Games = {};
 
@@ -81,9 +100,6 @@ const initializeGrid = (rows: number, cols: number): string[][] => {
 
   return grid;
 };
-
-// Stocke l'état actuel de la grille du jeu
-let grid: string[][] = initializeGrid(nbRows, pxCells);
 
 // Fonction pour générer l'ID de la partie
 function generateGameId(): number {
@@ -116,7 +132,17 @@ const getWinningCells = (
 };
 
 // Fonction de vérification de la partie
-function checkWin(grid: string[][]): string | null {
+function checkWin(
+  grid: string[][],
+  joueur1Id: string,
+  joueur2Id: string
+): {
+  winner: string | null;
+  winningCells: number[][] | null;
+} {
+  let winner: string | null = null;
+  let winningCells: number[][] | null = null;
+
   const checkWinCondition = (symbols: string[]): boolean => {
     if (symbols.every((symbol) => symbol === "O")) {
       winner = joueur1Id!;
@@ -187,15 +213,14 @@ function checkWin(grid: string[][]): string | null {
   checkVertical();
   checkDiagonal();
 
-  if (winner !== null) {
-    console.log(`Le joueur ${winner} a gagné`);
-    return winner;
-  }
-
-  return null; // Retourne null s'il n'y a pas de gagnant
+  return { winner, winningCells };
 }
 
-function getNewNextPlayerId(): string {
+function getNewNextPlayerId(
+  nextPlayerId: string,
+  joueur1Id: string,
+  joueur2Id: string
+): string {
   // Alternez entre deux joueurs
   if (nextPlayerId === joueur1Id) {
     return joueur2Id!;
@@ -219,6 +244,8 @@ export const initializeSocket = (io: Server) => {
 
     socket.on("joinRoom", (room) => {
       const findRoom = rooms.find((r) => r.path === room);
+
+      const index = rooms.findIndex((r) => r.path === room);
 
       // Vérifier si le nombre de connexions actives a atteint la limite
       if (findRoom && findRoom.activeConnections >= maxConnectionsPerRoom) {
@@ -249,10 +276,13 @@ export const initializeSocket = (io: Server) => {
           pseudo: "test",
           currentRoom: room,
         });
-        console.log(players[room]);
 
         // Émettez les informations sur la room et les joueurs aux clients
         io.to(room).emit("userJoined", players[room]);
+
+        if (index !== -1) {
+          io.to(socket.id).emit("receivedMessageInRoom", rooms[index].messages);
+        }
 
         console.log(`Client ${socket.id} a rejoint la room ${room}`);
       } else {
@@ -301,11 +331,98 @@ export const initializeSocket = (io: Server) => {
       }
     });
 
+    socket.on("leaveGameRoom", () => {
+      console.log("Un client a quitté la room de jeu");
+
+      // Trouver la room de jeu correspondante
+      // Dans le cas d'une déconnexion en jeu
+      const gameRoom = Object.keys(games).find((key) =>
+        games[key].find((game) => game.players?.includes(socket.id))
+      );
+
+      // Supprimer la partie de la liste des parties
+      if (gameRoom) {
+        const findGame = games[gameRoom].find((game) =>
+          game.players?.includes(socket.id)
+        );
+
+        if (findGame) {
+          io.emit(
+            "gameOver",
+            findGame.grid,
+            findGame.currentPlayerId,
+            socket.id === findGame.joueur1Id
+              ? findGame.joueur2Id
+              : findGame.joueur1Id,
+            findGame.winningCells
+          );
+        }
+
+        games[gameRoom] = games[gameRoom].filter(
+          (game) => !game.players?.includes(socket.id)
+        );
+
+        io.to(gameRoom).emit("gameList", games[gameRoom]);
+      }
+    });
+
+    socket.on("sentMessageInRoom", (message) => {
+      // Recherchez la room à laquelle le client est connecté
+      let roomPath: string | null = null;
+
+      console.log(message);
+
+      socket.rooms.forEach((r) => {
+        if (r !== socket.id) {
+          roomPath = r;
+        }
+      });
+
+      if (!roomPath || !message) {
+        return;
+      }
+
+      console.log(
+        `Le client ${socket.id} a envoyé le message ${message} dans la room ${roomPath}`
+      );
+
+      // Trouvez l'index de la room correspondante dans le tableau rooms
+      const index = rooms.findIndex((r) => r.path === roomPath);
+
+      if (index !== -1) {
+        if (rooms[index].messages.length >= 100) rooms[index].messages.shift();
+
+        rooms[index].messages.push(message);
+        io.to(roomPath).emit("receivedMessageInRoom", rooms[index].messages);
+      }
+    });
+
+    socket.on("sentMessageInGame", (message) => {
+      // Trouver la room de jeu correspondante
+      const gameRoom = Object.keys(games).find((key) =>
+        games[key].find((game) => game.players?.includes(socket.id))
+      );
+
+      if (gameRoom) {
+        const game = games[gameRoom].find((game) =>
+          game.players?.includes(socket.id)
+        );
+
+        if (game) {
+          if (game.messages.length >= 100) game.messages.shift();
+          // Ajouter le message à la liste des messages du jeu
+          game.messages.push(message);
+          io.to(gameRoom).emit("receivedMessageInGame", game.messages);
+        }
+      }
+    });
+
     socket.on("sendInvite", (invitedPlayerId) => {
       console.log(
         `Le joueur ${socket.id} a envoyé une invitation au joueur ${invitedPlayerId}`
       );
 
+      // Erreur pour l'envoi d'une invitation à soi-même
       if (socket.id === invitedPlayerId) {
         console.log("Vous ne pouvez pas envoyer une invitation à vous même");
         io.to(socket.id).emit("declinedInvite", socket.id);
@@ -336,13 +453,14 @@ export const initializeSocket = (io: Server) => {
         gameId,
         invitedBy: socket.id,
         room: roomPath,
+        joueur1Id: socket.id,
+        joueur2Id: invitedPlayerId,
+        currentPlayerId: socket.id,
+        nextPlayerId: invitedPlayerId,
       };
 
       socket.join(gameId.toString());
-      joueur1Id = socket.id;
-      joueur2Id = invitedPlayerId;
-      currentPlayerId = socket.id;
-      nextPlayerId = invitedPlayerId;
+
       io.to(socket.id).emit("playerSymbol", playerSymbols[0]);
 
       io.to(invitedPlayerId).emit("receivedInvite", socket.id);
@@ -354,13 +472,40 @@ export const initializeSocket = (io: Server) => {
       );
 
       // Récupérer l'invitation en attente
-      const { gameId, invitedBy, room } = pendingInvitations[socket.id];
+      const {
+        gameId,
+        invitedBy,
+        room,
+        joueur1Id,
+        joueur2Id,
+        currentPlayerId,
+        nextPlayerId,
+      } = pendingInvitations[socket.id];
 
       // Supprimer l'invitation en attente
       delete pendingInvitations[socket.id];
 
       // Rejoindre la room de la partie
       socket.join(gameId.toString());
+
+      const grid = initializeGrid(nbRows, pxCells);
+
+      if (!games[room]) {
+        games[room] = [];
+      }
+
+      games[room].push({
+        id: gameId,
+        players: [socket.id, invitedPlayerId],
+        grid: [...grid],
+        winningCells: [],
+        currentPlayerId,
+        nextPlayerId,
+        joueur1Id,
+        joueur2Id,
+        winner: null,
+        messages: [],
+      });
 
       io.to(socket.id).emit("playerSymbol", playerSymbols[1]);
 
@@ -380,17 +525,6 @@ export const initializeSocket = (io: Server) => {
         currentPlayerId,
         gameId
       );
-
-      if (!games[room]) {
-        games[room] = [];
-      }
-
-      games[room].push({
-        id: gameId,
-        players: [socket.id, invitedPlayerId],
-        grid,
-        winner: null,
-      });
 
       io.to(room).emit("gameList", games[room]);
 
@@ -416,32 +550,53 @@ export const initializeSocket = (io: Server) => {
     // Gestion de l'événement "updateGrid"
     socket.on("setUpdateGrid", (currentPlayer, updatedGrid) => {
       console.log("Mise à jour de la grille");
+      // Récuperer la room de la partie
+      const room = Object.keys(games).find((key) =>
+        games[key].find((game) => game.players?.includes(socket.id))
+      );
+
+      if (!room) return;
+
+      const game = games[room].find((game) =>
+        game.players?.includes(socket.id)
+      );
+
+      if (!game) return;
+
+      const { currentPlayerId, joueur1Id, joueur2Id, winningCells } = game;
+
       console.log(
         `Joueur courant : ${currentPlayer} et joueur actuel : ${currentPlayerId}`
       );
       if (currentPlayer !== currentPlayerId) {
         return; // Ignorer la mise à jour si ce n'est pas le tour du joueur qui envoie la mise à jour
       }
-      grid = updatedGrid;
+      game.grid = updatedGrid;
 
       // Vérification de la partie et envoi de l'événement "gameOver" si nécessaire
-      const winningPlayer = checkWin(grid);
+      const winningPlayer = checkWin(game.grid, joueur1Id, joueur2Id);
 
-      if (winningPlayer !== null) {
-        io.emit("gameOver", grid, currentPlayer, winningPlayer, winningCells);
+      if (winningPlayer.winner !== null) {
+        io.emit(
+          "gameOver",
+          game.grid,
+          currentPlayer,
+          winningPlayer.winner,
+          winningPlayer.winningCells
+        );
         console.log("Envoi de l'événement gameOver - FIN DE LA PARTIE");
 
         // Réinitialisation de la grille
-        grid = initializeGrid(nbRows, pxCells);
+        game.grid = initializeGrid(nbRows, pxCells);
 
-        // Réinitialisation des variables
-        winner = null;
-        winningCells = [];
-        currentPlayerId = null;
-        nextPlayerId = null;
-        joueur1Id = null;
-        joueur2Id = null;
-        initializeGrid(nbRows, pxCells);
+        // // Réinitialisation des variables
+        // winner = null;
+        // winningCells = [];
+        // currentPlayerId = null;
+        // nextPlayerId = null;
+        // joueur1Id = null;
+        // joueur2Id = null;
+        // initializeGrid(nbRows, pxCells);
 
         // Récuperer la room de la partie
         const room = Object.keys(games).find((key) =>
@@ -464,17 +619,22 @@ export const initializeSocket = (io: Server) => {
           "Envoi de la grille mise à jour à tous les clients connectés"
         );
         // Mettre à jour currentPlayerId avec l'ID du prochain joueur
-        currentPlayerId = nextPlayerId;
+        game.currentPlayerId = game.nextPlayerId;
         // Mettre à jour nextPlayerId avec l'ID du prochain joueur
-        nextPlayerId = getNewNextPlayerId();
+        game.nextPlayerId = getNewNextPlayerId(
+          game.nextPlayerId,
+          game.joueur1Id,
+          game.joueur2Id
+        );
         // Envoi de la grille mise à jour à tous les clients connectés
-        io.emit("gridUpdated", grid, currentPlayerId);
+        io.emit("gridUpdated", game.grid, game.currentPlayerId);
       }
     });
 
     // Gestion de la déconnexion d'un client
     socket.on("disconnect", () => {
       console.log(`Un client est déconnecté ${socket.id}`);
+      console.log(socket.id);
 
       let disconnectedPlayer = null;
 
@@ -508,13 +668,35 @@ export const initializeSocket = (io: Server) => {
         io.to(currentRoom).emit("updatePlayers", players[currentRoom]);
       }
 
-      winner = null;
-      winningCells = [];
-      currentPlayerId = null;
-      nextPlayerId = null;
-      // rooms = new Map();
-      joueur1Id = null;
-      joueur2Id = null;
+      // Dans le cas d'une déconnexion en jeu
+      const gameRoom = Object.keys(games).find((key) =>
+        games[key].find((game) => game.players?.includes(socket.id))
+      );
+
+      // Supprimer la partie de la liste des parties
+      if (gameRoom) {
+        const findGame = games[gameRoom].find((game) =>
+          game.players?.includes(socket.id)
+        );
+
+        if (findGame) {
+          io.emit(
+            "gameOver",
+            findGame.grid,
+            findGame.currentPlayerId,
+            socket.id === findGame.joueur1Id
+              ? findGame.joueur2Id
+              : findGame.joueur1Id,
+            findGame.winningCells
+          );
+        }
+
+        games[gameRoom] = games[gameRoom].filter(
+          (game) => !game.players?.includes(socket.id)
+        );
+
+        io.to(gameRoom).emit("gameList", games[gameRoom]);
+      }
     });
   });
 };
