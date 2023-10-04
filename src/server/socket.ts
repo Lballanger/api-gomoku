@@ -106,6 +106,10 @@ function generateGameId(): number {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
+function randomStartPlayer(): number {
+  return Math.round(Math.random());
+}
+
 // Fonction pour obtenir les cellules gagnantes
 const getWinningCells = (
   row: number,
@@ -448,6 +452,9 @@ export const initializeSocket = (io: Server) => {
         return;
       }
 
+      // Nombre aléatoire pour l'ordre de départ des joueurs
+      const numberForStartingPlayer = randomStartPlayer();
+
       // Stocker l'invitation en attente
       pendingInvitations[invitedPlayerId] = {
         gameId,
@@ -455,13 +462,13 @@ export const initializeSocket = (io: Server) => {
         room: roomPath,
         joueur1Id: socket.id,
         joueur2Id: invitedPlayerId,
-        currentPlayerId: socket.id,
-        nextPlayerId: invitedPlayerId,
+        currentPlayerId:
+          numberForStartingPlayer === 0 ? socket.id : invitedPlayerId,
+        nextPlayerId:
+          numberForStartingPlayer === 0 ? invitedPlayerId : socket.id,
       };
 
       socket.join(gameId.toString());
-
-      io.to(socket.id).emit("playerSymbol", playerSymbols[0]);
 
       io.to(invitedPlayerId).emit("receivedInvite", socket.id);
     });
@@ -507,7 +514,15 @@ export const initializeSocket = (io: Server) => {
         messages: [],
       });
 
-      io.to(socket.id).emit("playerSymbol", playerSymbols[1]);
+      // Random pour l'affectation des symboles aux joueurs
+      const randomPlayerSymbol = randomStartPlayer();
+
+      io.to(socket.id).emit("playerSymbol", playerSymbols[randomPlayerSymbol]);
+
+      io.to(invitedPlayerId).emit(
+        "playerSymbol",
+        playerSymbols[randomPlayerSymbol === 0 ? 1 : 0]
+      );
 
       // Envoie de l'événement "gameInitialization" à tous les membres de la room
       io.to(socket.id).emit(
@@ -588,15 +603,6 @@ export const initializeSocket = (io: Server) => {
 
         // Réinitialisation de la grille
         game.grid = initializeGrid(nbRows, pxCells);
-
-        // // Réinitialisation des variables
-        // winner = null;
-        // winningCells = [];
-        // currentPlayerId = null;
-        // nextPlayerId = null;
-        // joueur1Id = null;
-        // joueur2Id = null;
-        // initializeGrid(nbRows, pxCells);
 
         // Récuperer la room de la partie
         const room = Object.keys(games).find((key) =>
